@@ -1,127 +1,172 @@
 <html>
 <head>
     <meta content="text/html;charset=utf-8" http-equiv="Content-Type" />
+    <meta name='viewport' content='width=device-width' />
     <script src="https://ajax.aspnetcdn.com/ajax/jQuery/jquery-3.4.1.min.js"></script>
 </head>
-<body>    
-    <input type="radio" name="match-type" checked value="ml">Means like<br>
-    <input type="radio" name="match-type" value="sl">Sounds like<br><br/>
-    Word quality threshhold:<br/>
-    <input type="range" min="0" max="100" value="80" id="quality-threshhold-percentage"><br/><br/>
-    Book: <input type="text" id="book" value="Psalms" /> Chapter: <input type="text" id="chapter" value="23" />
-    <button>Regenerate</button><br/>
-    <br/>
-    <br/>
-    <div class="container"></div>
+<body style="text-align: center">    
+    <div style="border: 1px solid black; margin: 18px auto; padding: 18px; display: inline-block;">
+        <input type="radio" name="match-type" checked value="ml">Means like<br>
+        <input type="radio" name="match-type" value="sl">Sounds like<br><br/>
+        Word quality threshhold:<br/>
+        <input type="range" min="0" max="100" value="80" id="quality-threshhold-percentage"><br/><br/>
+        Book: <input type="text" id="book" value="Psalms" /><br/>
+        Chapter: <input type="text" id="chapter" value="23" /><br/>
+        <br/>
+        <button>Regenerate</button>
+    </div>
+    <div id="text-container" style="border: 1px solid black; margin: 18px; padding: 18px;"></div>
     <script>
 
 
+        /******************************/
         /****** GLOBAL CONSTANTS ******/
+        /******************************/
 
+        //Config values
         const IGNORED_WORDS = ["a", "the", "is", "was", "are", "had", "to", "it", "he", "she", "they", "them", "these", "those", "i", "me", "you", "in", "and", "of", "a", "there", "be", "that", "he", "from", "to", "us", "it", "as", "on", "an", "said", "my", "not"];
         const SCREEN_REDRAW_MILLISECONDS = 500;
+        const REPLACABLE_CHARACTER_REGEX = /[a-zA-Z]/;
+
+        //Html selectors
+        const TEXT_CONTAINER_SELECTOR = "#text-container";
+        const REGENERATE_BUTTON_SELECTOR = "button";
+        const MATCH_TYPE_RADIO_SELECTOR = "[name=match-type]:checked";
+        const QUALITY_TRESHHOLD_PERCENTAGE_INPUT_SELECTOR = "#quality-threshhold-percentage";
+        const BOOK_INPUT_SELECTOR = "#book";
+        const CHAPTER_INPUT_SELECTOR = "#chapter";
 
 
+        /******************************/
         /****** GLOBAL VARIABLES ******/
+        /******************************/
 
-        let globalWordPairs;
+        let globalWordReplacePairs;
 
-
-        /***** MAIN CODE *****/
+        /******************************/
+        /********* MAIN CODE **********/
+        /******************************/
 
         randomizeWordsAndOutputResult();
-        $('button').click(() => randomizeWordsAndOutputResult());
+        $(REGENERATE_BUTTON_SELECTOR).click(() => randomizeWordsAndOutputResult());
 
 
-        /***** HELPER FUNCTIONS *****/
+        /******************************/
+        /****** HELPER FUNCTIONS ******/
+        /******************************/
 
         function randomizeWordsAndOutputResult() {
-            $(".container").text("");
+            outputText("");
             getOriginalText()
                 .then(originalText => {
-                    globalWordPairs = getUnmappedWordPairs(originalText);        
+                    globalWordReplacePairs = getUnmappedWordReplacePairs(originalText);        
                     mapWordPairsAsync();
-                    startThreadToContinuouslyRedrawScreenAsync(originalText);
+                    startScreenRedrawLoopAsync(originalText);
                 });
+        }
+
+        function outputText(text) {
+            $(TEXT_CONTAINER_SELECTOR).text(text);
         }
 
         function getOriginalText() {
 
             //Get dynamic config values
-            const book = $('#book')[0].value;
-            const chapter = $('#chapter')[0].value;
+            const book = $(BOOK_INPUT_SELECTOR)[0].value;
+            const chapter = $(CHAPTER_INPUT_SELECTOR)[0].value;
 
-            $.support.cors = true;
+            //Call API
             return $.ajax({
                 method: "GET",
                 url: "https://getbible.net/json?passage=" + book + chapter + ":1-100",
                 dataType: "jsonp",
-                crossDomain: true,
                 success: (response) => { return response; }
             })
+
+                //Parse response
                 .then(response => {
-                    let passageText = "";
+                    let originalText = "";
                     const verses = response.book[0].chapter;
                     for (var key in verses) {                        
-                        passageText = passageText + key + " " + verses[key].verse + " ";
+                        originalText = originalText + key + " " + verses[key].verse + " ";
                     }
-                    return passageText;
+                    return originalText;
                 });
         }
 
-        function getUnmappedWordPairs(originalText) {
-            let globalWordPairs = [];
+        function getUnmappedWordReplacePairs(originalText) {
+            let wordReplacePairs = [];
 
+            //Add each replacable word to collection
+            forEachReplacableWord(originalText, replacableWord => {
+                addWordToWordReplacePairs(replacableWord, wordReplacePairs)
+            });
+
+            //Return collection
+            return wordReplacePairs;
+        }
+
+        function forEachReplacableWord(text, onReplacableWord, onNonReplacableCharacter) {
+            
             //Loop through each character
-            const originalTextCharacterArray = originalText.split("");
+            const textAsArray = text.split("");
             let currentWord = "";
-            originalTextCharacterArray.forEach(letter => {
+            textAsArray.forEach(character => {
 
-                //Add alpha character to word
-                if (letter.match(/[a-zA-Z]/)) {
-                    currentWord = currentWord + letter;
+                //IF replacable THEN add character to current word
+                if (character.match(REPLACABLE_CHARACTER_REGEX)) {
+                    currentWord = currentWord + character;
                 }
 
-                //Add word to global word pairs
+                //IF not replacable THEN invoke callbacks
                 else {
-                    globalWordPairs = getWordPairsWithNewWord(currentWord, globalWordPairs);
+                    if (onReplacableWord !== undefined && currentWord.length > 0)
+                        onReplacableWord(currentWord);
+                    if (onNonReplacableCharacter)
+                        onNonReplacableCharacter(character);
                     currentWord = "";
                 }
             });
-            globalWordPairs = getWordPairsWithNewWord(currentWord, globalWordPairs);
-            return globalWordPairs;
+
+            //Invoke callback for final word
+            if (onReplacableWord !== undefined && currentWord.length > 0)
+                onReplacableWord(currentWord);
         }
         
-        function getWordPairsWithNewWord(word, globalWordPairs) {
-            if (word.length > 0 && globalWordPairs.filter((x) => x.inputWord === word.toLowerCase()).length === 0 && IGNORED_WORDS.filter((x) => x === word.toLowerCase()).length === 0) {
-                var wordPair = { inputWord: word.toLowerCase() };
-                globalWordPairs.push(wordPair);
+        function addWordToWordReplacePairs(word, wordReplacePairs) {
+            const lowerCaseWord = word.toLowerCase();
+            const wordIsNotInCollectionAlready = wordReplacePairs.filter((x) => x.inputWord === lowerCaseWord).length === 0;
+            const wordIsNotIgnored = IGNORED_WORDS.filter((x) => x === lowerCaseWord).length === 0;
+
+            //Add word
+            if (wordIsNotInCollectionAlready && wordIsNotIgnored) {
+                const wordReplacePair = { inputWord: lowerCaseWord };
+                wordReplacePairs.push(wordReplacePair);
             }
-            return globalWordPairs;
         }
 
         function mapWordPairsAsync() {
 
             //Get dymanic config values
-            const qualityThreshholdPercentage = $('#quality-threshhold-percentage')[0].value;
-            const matchType = $('[name=match-type]:checked').val();
+            const qualityThreshholdPercentage = $(QUALITY_TRESHHOLD_PERCENTAGE_INPUT_SELECTOR)[0].value;
+            const matchType = $(MATCH_TYPE_RADIO_SELECTOR).val();
 
             //Start async GET for each word
-            globalWordPairs.forEach(wordPair => {
+            globalWordReplacePairs.forEach(wordReplacePair => {
                 $.ajax({
                     method: "GET",
-                    url: "https://api.datamuse.com/words?" + matchType + "=" + wordPair.inputWord,
+                    url: "https://api.datamuse.com/words?" + matchType + "=" + wordReplacePair.inputWord,
                     dataType: "json",
                     success: (response) => {
 
                         //Get outputWord from response
                         const outputWord = getOutputWord(response, qualityThreshholdPercentage);
 
-                        //Add to wordPair
+                        //Add to wordReplacePair
                         if (outputWord !== null)
-                            wordPair.outputWord = outputWord.toLowerCase();
+                            wordReplacePair.outputWord = outputWord.toLowerCase();
                         else 
-                            wordPair.outputWord = wordPair.inputWord;
+                            wordReplacePair.outputWord = wordReplacePair.inputWord;
                     }
                 });
             });
@@ -129,73 +174,95 @@
 
         function getOutputWord(response, qualityThreshholdPercentage) {
             let outputWord = null;
+
+            //Get quality threshhold
             if (response.length > 0) {
                 let qualityThreshhold = response[0].score * qualityThreshholdPercentage / 100;
                 if (response[0].score < qualityThreshhold)
                     qualityThreshhold = response[0].score;
-                var options = response.filter(x => x.score >= qualityThreshhold);
-                if (options.length === 0)
-                    options = response.slice(0,1);
-                const chosenOption = options[Math.floor(Math.random() * options.length)];
+
+                //Get options matching criteria
+                let optionsMatchingCriteria = response.filter(x => x.score >= qualityThreshhold);
+                if (optionsMatchingCriteria.length === 0)
+                optionsMatchingCriteria = response.slice(0,1);
+
+                //Choose option
+                const chosenOption = optionsMatchingCriteria[Math.floor(Math.random() * optionsMatchingCriteria.length)];
                 outputWord = chosenOption.word;
             }
             return outputWord;
         }
 
-        function startThreadToContinuouslyRedrawScreenAsync(originalText) {
+        function startScreenRedrawLoopAsync(originalText) {
+
+            //Draw screen
+            let replacedText = getReplacedText(originalText);
+            outputText(replacedText);
+
+            //Start async loop
             const intervalHandle = setInterval(() => {
 
                 //Redraw screen
-                const outputText = getOutput(originalText);
-                $(".container").text(outputText);
+                replacedText = getReplacedText(originalText);
+                outputText(replacedText);
 
-                //Output missing words
-                const missingWordCount = globalWordPairs.filter(x => x.outputWord === undefined).length;
-                console.log('Missing words: ' + missingWordCount);
-                if (missingWordCount === 0)
+                //End loop if all words have been mapped
+                const unmappedWordCount = globalWordReplacePairs.filter(x => x.outputWord === undefined).length;
+                console.log('Unmapped words: ' + unmappedWordCount);
+                if (unmappedWordCount === 0)
                     clearInterval(intervalHandle);
             }, SCREEN_REDRAW_MILLISECONDS);
         }
 
-        function getOutput(originalText) {
-            let outputText = "";    
-            let currentWord = "";
-            originalText.split("").forEach(letter => {
-                if (letter.match(/[a-zA-Z]/))
-                    currentWord = currentWord + letter;
-                else {          
-                    outputText = getOutputWithAppendedCurrentWord(outputText, currentWord);          
-                    currentWord = "";
-                    outputText = outputText + letter;
-                }
-            });
-            outputText = getOutputWithAppendedCurrentWord(outputText, currentWord);
-            return outputText;
+        function getReplacedText(originalText) {
+            let replacedText = "";
+
+            //Replace each word
+            forEachReplacableWord(originalText,
+                replacableWord => replacedText = replacedText + getReplacement(replacableWord),
+                nonReplacableCharacter => replacedText = replacedText + nonReplacableCharacter);
+
+            //Return replaced text
+            return replacedText;
         }
 
-        function getOutputWithAppendedCurrentWord(output, currentWord) {
-            if (currentWord.length > 0 && globalWordPairs.filter((x) => x.inputWord === currentWord.toLowerCase()).length > 0) {
-                const wordPair = globalWordPairs.filter((x) => x.inputWord === currentWord.toLowerCase())[0];
-                if (wordPair.outputWord !== undefined) {
-                    output = output + capitalizeIfNecessary(wordPair.outputWord, currentWord);
+        function getReplacement(replacableWord) {
+            let replacement = "";
+
+            //IF word has a replacement THEN use replacement
+            const wordReplacePairs = globalWordReplacePairs.filter((x) => x.inputWord === replacableWord.toLowerCase());
+            if (wordReplacePairs.length > 0) {
+                const wordReplacePair = wordReplacePairs[0];
+                if (wordReplacePair.outputWord !== undefined) {
+                    replacement = capitalizeIfNecessary(wordReplacePair.outputWord, replacableWord);
                 }
+
+                //IF word's replacement hasn't been mapped THEN use question marks 
                 else {
                     let questionMarks = "";
-                    currentWord.split("").forEach(x => questionMarks = questionMarks + "?");
-                    output = output + questionMarks;
+                    replacableWord.split("").forEach(x => questionMarks = questionMarks + "?");
+                    replacement = questionMarks;
                 }
             }
+
+            //IF a word will not be replaced THEN use original word
             else {
-                output = output + currentWord;
+                replacement = replacableWord;
             }
-            return output;
+            return replacement;
         }
 
         function capitalizeIfNecessary(newWord, originalWord) {
+
+            //IF original word is entirely caps THEN capitalize entire new word
             if (originalWord.toUpperCase() === originalWord)
                 return newWord.toUpperCase();
+
+            //If original word has capital first letter THEN capitalize first letter of new word
             else if (originalWord.charAt(0).toUpperCase() === originalWord.charAt(0))
                 return newWord.charAt(0).toUpperCase() + newWord.slice(1);
+
+            //IF original word is not capitalized THEN don't capitalize new word
             else 
                 return newWord;
         }
