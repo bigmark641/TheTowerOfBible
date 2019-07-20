@@ -1,0 +1,204 @@
+<html>
+<head>
+    <meta content="text/html;charset=utf-8" http-equiv="Content-Type" />
+    <script src="https://ajax.aspnetcdn.com/ajax/jQuery/jquery-3.4.1.min.js"></script>
+</head>
+<body>    
+    <input type="radio" name="match-type" checked value="ml">Means like<br>
+    <input type="radio" name="match-type" value="sl">Sounds like<br><br/>
+    Word quality threshhold:<br/>
+    <input type="range" min="0" max="100" value="80" id="quality-threshhold-percentage"><br/><br/>
+    Book: <input type="text" id="book" value="Psalms" /> Chapter: <input type="text" id="chapter" value="23" />
+    <button>Regenerate</button><br/>
+    <br/>
+    <br/>
+    <div class="container"></div>
+    <script>
+
+
+        /****** GLOBAL CONSTANTS ******/
+
+        const IGNORED_WORDS = ["a", "the", "is", "was", "are", "had", "to", "it", "he", "she", "they", "them", "these", "those", "i", "me", "you", "in", "and", "of", "a", "there", "be", "that", "he", "from", "to", "us", "it", "as", "on", "an", "said", "my", "not"];
+        const SCREEN_REDRAW_MILLISECONDS = 500;
+
+
+        /****** GLOBAL VARIABLES ******/
+
+        let globalWordPairs;
+
+
+        /***** MAIN CODE *****/
+
+        randomizeWordsAndOutputResult();
+        $('button').click(() => randomizeWordsAndOutputResult());
+
+
+        /***** HELPER FUNCTIONS *****/
+
+        function randomizeWordsAndOutputResult() {
+            $(".container").text("");
+            getOriginalText()
+                .then(originalText => {
+                    globalWordPairs = getUnmappedWordPairs(originalText);        
+                    mapWordPairsAsync();
+                    startThreadToContinuouslyRedrawScreenAsync(originalText);
+                });
+        }
+
+        function getOriginalText() {
+
+            //Get dynamic config values
+            const book = $('#book')[0].value;
+            const chapter = $('#chapter')[0].value;
+
+            $.support.cors = true;
+            return $.ajax({
+                method: "GET",
+                url: "http://getbible.net/json?passage=" + book + chapter + ":1-100",
+                dataType: "jsonp",
+                crossDomain: true,
+                success: (response) => { return response; }
+            })
+                .then(response => {
+                    let passageText = "";
+                    const verses = response.book[0].chapter;
+                    for (var key in verses) {                        
+                        passageText = passageText + key + " " + verses[key].verse + " ";
+                    }
+                    return passageText;
+                });
+        }
+
+        function getUnmappedWordPairs(originalText) {
+            let globalWordPairs = [];
+
+            //Loop through each character
+            const originalTextCharacterArray = originalText.split("");
+            let currentWord = "";
+            originalTextCharacterArray.forEach(letter => {
+
+                //Add alpha character to word
+                if (letter.match(/[a-zA-Z]/)) {
+                    currentWord = currentWord + letter;
+                }
+
+                //Add word to global word pairs
+                else {
+                    globalWordPairs = getWordPairsWithNewWord(currentWord, globalWordPairs);
+                    currentWord = "";
+                }
+            });
+            globalWordPairs = getWordPairsWithNewWord(currentWord, globalWordPairs);
+            return globalWordPairs;
+        }
+        
+        function getWordPairsWithNewWord(word, globalWordPairs) {
+            if (word.length > 0 && globalWordPairs.filter((x) => x.inputWord === word.toLowerCase()).length === 0 && IGNORED_WORDS.filter((x) => x === word.toLowerCase()).length === 0) {
+                var wordPair = { inputWord: word.toLowerCase() };
+                globalWordPairs.push(wordPair);
+            }
+            return globalWordPairs;
+        }
+
+        function mapWordPairsAsync() {
+
+            //Get dymanic config values
+            const qualityThreshholdPercentage = $('#quality-threshhold-percentage')[0].value;
+            const matchType = $('[name=match-type]:checked').val();
+
+            //Start async GET for each word
+            globalWordPairs.forEach(wordPair => {
+                $.ajax({
+                    method: "GET",
+                    url: "https://api.datamuse.com/words?" + matchType + "=" + wordPair.inputWord,
+                    dataType: "json",
+                    success: (response) => {
+
+                        //Get outputWord from response
+                        const outputWord = getOutputWord(response, qualityThreshholdPercentage);
+
+                        //Add to wordPair
+                        if (outputWord !== null)
+                            wordPair.outputWord = outputWord.toLowerCase();
+                        else 
+                            wordPair.outputWord = wordPair.inputWord;
+                    }
+                });
+            });
+        }
+
+        function getOutputWord(response, qualityThreshholdPercentage) {
+            let outputWord = null;
+            if (response.length > 0) {
+                let qualityThreshhold = response[0].score * qualityThreshholdPercentage / 100;
+                if (response[0].score < qualityThreshhold)
+                    qualityThreshhold = response[0].score;
+                var options = response.filter(x => x.score >= qualityThreshhold);
+                if (options.length === 0)
+                    options = response.slice(0,1);
+                const chosenOption = options[Math.floor(Math.random() * options.length)];
+                outputWord = chosenOption.word;
+            }
+            return outputWord;
+        }
+
+        function startThreadToContinuouslyRedrawScreenAsync(originalText) {
+            const intervalHandle = setInterval(() => {
+
+                //Redraw screen
+                const outputText = getOutput(originalText);
+                $(".container").text(outputText);
+
+                //Output missing words
+                const missingWordCount = globalWordPairs.filter(x => x.outputWord === undefined).length;
+                console.log('Missing words: ' + missingWordCount);
+                if (missingWordCount === 0)
+                    clearInterval(intervalHandle);
+            }, SCREEN_REDRAW_MILLISECONDS);
+        }
+
+        function getOutput(originalText) {
+            let outputText = "";    
+            let currentWord = "";
+            originalText.split("").forEach(letter => {
+                if (letter.match(/[a-zA-Z]/))
+                    currentWord = currentWord + letter;
+                else {          
+                    outputText = getOutputWithAppendedCurrentWord(outputText, currentWord);          
+                    currentWord = "";
+                    outputText = outputText + letter;
+                }
+            });
+            outputText = getOutputWithAppendedCurrentWord(outputText, currentWord);
+            return outputText;
+        }
+
+        function getOutputWithAppendedCurrentWord(output, currentWord) {
+            if (currentWord.length > 0 && globalWordPairs.filter((x) => x.inputWord === currentWord.toLowerCase()).length > 0) {
+                const wordPair = globalWordPairs.filter((x) => x.inputWord === currentWord.toLowerCase())[0];
+                if (wordPair.outputWord !== undefined) {
+                    output = output + capitalizeIfNecessary(wordPair.outputWord, currentWord);
+                }
+                else {
+                    let questionMarks = "";
+                    currentWord.split("").forEach(x => questionMarks = questionMarks + "?");
+                    output = output + questionMarks;
+                }
+            }
+            else {
+                output = output + currentWord;
+            }
+            return output;
+        }
+
+        function capitalizeIfNecessary(newWord, originalWord) {
+            if (originalWord.toUpperCase() === originalWord)
+                return newWord.toUpperCase();
+            else if (originalWord.charAt(0).toUpperCase() === originalWord.charAt(0))
+                return newWord.charAt(0).toUpperCase() + newWord.slice(1);
+            else 
+                return newWord;
+        }
+    </script>
+</body>
+</html>
