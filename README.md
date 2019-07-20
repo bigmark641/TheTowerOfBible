@@ -16,4 +16,4 @@ Each word comes back from the API with a score.  Having the slider all the way t
 ## Disclaimers
 I believe the thesaurus API has a daily limit of something like 20,000 words.
 
-The code is really messy, and maybe I'll go back and clean it up someday.
+The html code is really messy, and maybe I'll clean it up someday.
