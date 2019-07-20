@@ -54,7 +54,7 @@
             $.support.cors = true;
             return $.ajax({
                 method: "GET",
-                url: "http://getbible.net/json?passage=" + book + chapter + ":1-100",
+                url: "https://getbible.net/json?passage=" + book + chapter + ":1-100",
                 dataType: "jsonp",
                 crossDomain: true,
                 success: (response) => { return response; }
